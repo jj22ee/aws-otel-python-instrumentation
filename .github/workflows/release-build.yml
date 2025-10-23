@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repo @ SHA - ${{ github.sha }}
-        uses: actions/checkout@v4 #v5.0.0
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5.0.0
 
       - name: Build Wheel and Image Files
         uses: ./.github/actions/artifacts_build
@@ -60,10 +60,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repo @ SHA - ${{ github.sha }}
-        uses: actions/checkout@v4 #v5.0.0
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5.0.0
 
       - name: Configure AWS credentials for PyPI secrets
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@a03048d87541d1d9fcf2ecf528a4a65ba9bd7838 #v5.0.0
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_SECRETS_MANAGER }}
           aws-region: ${{ env.AWS_DEFAULT_REGION }}
@@ -79,7 +79,7 @@ jobs:
       # The step below publishes to testpypi in order to catch any issues
       # with the package configuration that would cause a failure to upload to pypi.
       - name: Install twine
-        run: pip install twine==5.1.1
+        run: pip install twine==6.1.0
       
       - name: Download SDK artifact
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 #v5.0.0
