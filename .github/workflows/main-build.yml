@@ -117,7 +117,7 @@ jobs:
     if: always()
     steps:
       - name: Configure AWS Credentials for emitting metrics
-        uses: aws-actions/configure-aws-credentials@a03048d87541d1d9fcf2ecf528a4a65ba9bd7838 #5.0.0
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.MONITORING_ROLE_ARN }}
           aws-region: ${{ env.AWS_DEFAULT_REGION }}
