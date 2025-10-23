@@ -83,15 +83,6 @@ jobs:
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 #v5.0.0
         with:
           name: ${{ env.ARTIFACT_NAME }}
-      
-      - name: Download layer.zip artifact
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 #v5.0.0
-        with:
-          name: layer.zip
-
-      - name: Rename layer file
-        run: |
-          cp aws-opentelemetry-python-layer.zip layer.zip
 
       # Publish to GitHub releases
       - name: Create GH release
@@ -158,7 +149,6 @@ jobs:
           EOF
 
           shasum -a 256 ${{ env.ARTIFACT_NAME }} > ${{ env.ARTIFACT_NAME }}.sha256
-          shasum -a 256 layer.zip > layer.zip.sha256
 
           gh release create --target "$GITHUB_REF_NAME" \
              --title "Release v$VERSION" \
@@ -166,6 +156,4 @@ jobs:
              --draft \
              "v$VERSION" \
              ${{ env.ARTIFACT_NAME }} \
-             ${{ env.ARTIFACT_NAME }}.sha256 \
-             layer.zip \
-             layer.zip.sha256
+             ${{ env.ARTIFACT_NAME }}.sha256
