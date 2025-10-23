@@ -28,23 +28,6 @@ jobs:
       - name: Checkout Repo @ SHA - ${{ github.sha }}
         uses: actions/checkout@v4
 
-      - name: Check main build status
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          WORKFLOW_ID=$(gh api repos/${{ github.repository }}/actions/workflows --jq '.workflows[] | select(.name=="Python Instrumentation Main Build") | .id')
-          LATEST_RUN=$(gh api repos/${{ github.repository }}/actions/workflows/$WORKFLOW_ID/runs --jq '[.workflow_runs[] | select(.head_branch=="${{ github.ref_name }}")] | sort_by(.created_at) | .[-1] | {conclusion, status}')
-          STATUS=$(echo "$LATEST_RUN" | jq -r '.status')
-          CONCLUSION=$(echo "$LATEST_RUN" | jq -r '.conclusion')
-          
-          if [ "$STATUS" = "in_progress" ] || [ "$STATUS" = "queued" ]; then
-            echo "Main build is still running (status: $STATUS). Cannot proceed with release."
-            exit 1
-          elif [ "$CONCLUSION" != "success" ]; then
-            echo "Latest main build on branch ${{ github.ref_name }} conclusion: $CONCLUSION"
-            exit 1
-          fi
-          echo "Main build succeeded, proceeding with release"
 
       - name: Build Wheel and Image Files
         uses: ./.github/actions/artifacts_build
@@ -55,89 +38,6 @@ jobs:
           python_version: "3.10"
           package_name: aws-opentelemetry-distro
           os: ubuntu-latest
-
-      # TODO: Add some sort of smoke/integration testing before we go
-      # release the artifacts. adot java for reference:
-      # https://github.com/aws-observability/aws-otel-java-instrumentation/tree/93870a550ac30988fbdd5d3bf1e8f9f1b37916f5/smoke-tests
-
-      - name: Configure AWS credentials for PyPI secrets
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN_SECRETS_MANAGER }}
-          aws-region: ${{ env.AWS_DEFAULT_REGION }}
-      
-      - name: Get PyPI secrets
-        uses: aws-actions/aws-secretsmanager-get-secrets@v1
-        id: pypi_secrets
-        with:
-          secret-ids: |
-            PROD_PYPI_TOKEN,${{ secrets.PYPI_PROD_TOKEN_SECRET_ARN }}
-            TEST_PYPI_TOKEN,${{ secrets.PYPI_TEST_TOKEN_SECRET_ARN }}
-          parse-json-secrets: true
-
-      - name: Configure AWS credentials for private ECR
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN_ECR_RELEASE }}
-          aws-region: ${{ env.AWS_PRIVATE_ECR_REGION }}
-
-      - name: Log in to AWS private ECR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.RELEASE_PRIVATE_REGISTRY }}
-
-      - name: Configure AWS credentials for public ECR
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN_ECR_RELEASE }}
-          aws-region: ${{ env.AWS_PUBLIC_ECR_REGION }}
-
-      - name: Log in to AWS public ECR
-        uses: docker/login-action@v3
-        with:
-          registry: public.ecr.aws
-
-      # The step below publishes to testpypi in order to catch any issues
-      # with the package configuration that would cause a failure to upload to pypi.
-      - name: Install twine
-        run: pip install twine
-      
-      - name: Publish to TestPyPI
-        env:
-          TWINE_USERNAME: '__token__'
-          TWINE_PASSWORD: ${{ env.TEST_PYPI_TOKEN_API_TOKEN }}
-        run: |
-          twine upload --repository testpypi --skip-existing --verbose dist/${{ env.ARTIFACT_NAME }}
-
-      # Publish to prod PyPI
-      - name: Publish to PyPI
-        env:
-          TWINE_USERNAME: '__token__'
-          TWINE_PASSWORD: ${{ env.PROD_PYPI_TOKEN_API_TOKEN }}
-        run: |
-          twine upload --skip-existing --verbose dist/${{ env.ARTIFACT_NAME }}
-
-      # Publish to public ECR
-      - name: Build and push public ECR image
-        uses: docker/build-push-action@v5
-        with:
-          push: true
-          context: .
-          file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
-          tags: |
-            ${{ env.RELEASE_PUBLIC_REPOSITORY }}:v${{ github.event.inputs.version }}
-
-      # Publish to private ECR
-      - name: Build and push private ECR image
-        uses: docker/build-push-action@v5
-        with:
-          push: true
-          context: .
-          file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
-          tags: |
-            ${{ env.RELEASE_PRIVATE_REPOSITORY }}:v${{ github.event.inputs.version }}
 
       - name: Get SHA256 checksum of wheel file
         id: get_sha256
@@ -150,17 +50,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # This token is provided by Actions, you do not need to create your own token
         run: |
-          # Download layer.zip from existing latest tagged SDK release note
-          LATEST_SDK_VERSION=$(gh release list --repo "aws-observability/aws-otel-python-instrumentation" --json tagName,isLatest -q 'map(select(.isLatest==true)) | .[0].tagName')
-          mkdir -p layer_artifact
-          gh release download "$LATEST_SDK_VERSION" --repo "aws-observability/aws-otel-python-instrumentation" --pattern "layer.zip" --dir layer_artifact
-          shasum -a 256 layer_artifact/layer.zip > layer_artifact/layer.zip.sha256
-
           gh release create --target "$GITHUB_REF_NAME" \
              --title "Release v${{ github.event.inputs.version }}" \
              --draft \
              "v${{ github.event.inputs.version }}" \
              dist/${{ env.ARTIFACT_NAME }} \
-             ${{ env.ARTIFACT_NAME }}.sha256 \
-             layer_artifact/layer.zip \
-             layer_artifact/layer.zip.sha256
+             ${{ env.ARTIFACT_NAME }}.sha256
