@@ -17,6 +17,10 @@ from amazon.opentelemetry.distro._aws_resource_attribute_configurator import _OT
 from amazon.opentelemetry.distro._aws_span_processing_util import UNKNOWN_SERVICE
 from amazon.opentelemetry.distro.debugger._data_models import BreakpointConfiguration
 from amazon.opentelemetry.distro.debugger.instrumentation_manager import get_global_manager
+from amazon.opentelemetry.distro.serviceevents.utils.ec2_asg_detector import (
+    EC2_ASG_ATTRIBUTE,
+    Ec2AutoScalingGroupResourceDetector,
+)
 from amazon.opentelemetry.distro.serviceevents.utils.environment_resolver import resolve_local_environment
 from opentelemetry import trace
 
@@ -37,6 +41,19 @@ DEFAULT_API_URL = "http://localhost:2000"  # Default debugger API URL
 BASE_BACKOFF_INTERVAL = 10  # Base interval for exponential backoff (seconds)
 MAX_BACKOFF_ATTEMPTS = 3  # Maximum number of backoff attempts for initial fetch
 DEGRADED_POLL_INTERVAL = 300  # 5 minutes — used when API endpoint is unreachable
+
+# Process-wide memoized EC2 Auto Scaling group lookup. DI reads the global resource, which
+# (TEST-ONLY) omits the ASG tag so it does not ride the AppSignals path; on the EC2 branch
+# the resolver falls back to this lazy IMDS lookup. Sentinel None = not yet attempted.
+_CACHED_ASG: Optional[str] = None
+
+
+def _fetch_ec2_asg() -> str:
+    global _CACHED_ASG  # pylint: disable=global-statement
+    if _CACHED_ASG is None:
+        resource = Ec2AutoScalingGroupResourceDetector().detect()
+        _CACHED_ASG = str(resource.attributes.get(EC2_ASG_ATTRIBUTE, "") or "")
+    return _CACHED_ASG
 
 
 class DebuggerClient:
@@ -149,7 +166,10 @@ class DebuggerClient:
             tracer_provider = trace.get_tracer_provider()
             global_resource = tracer_provider.resource
 
-            environment = resolve_local_environment(global_resource.attributes)
+            # The global resource intentionally omits the EC2 ASG tag (it must not ride the
+            # AppSignals path), so on the EC2 branch the resolver falls back to a lazy IMDS
+            # lookup via the ASG detector. Other branches never invoke the supplier.
+            environment = resolve_local_environment(global_resource.attributes, _fetch_ec2_asg)
 
             # Cache only once the resource has the platform context to resolve a concrete
             # value. "ec2:default" is also the fallback when the resource is still empty

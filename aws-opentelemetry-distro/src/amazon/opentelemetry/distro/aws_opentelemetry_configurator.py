@@ -201,13 +201,16 @@ def _initialize_components():
     auto_resource: Dict[str, any] = {}
     auto_resource = _customize_versions(auto_resource)
 
-    resource_detectors = (
+    # TEST-ONLY (revertible): the EC2 ASG detector is intentionally NOT in the global
+    # detector list, so ec2.tag.aws:autoscaling:groupName does NOT ride the global resource
+    # (which feeds Application Signals). The CloudWatch agent reads that exact key off
+    # incoming telemetry (awsentity processor) and would resolve EC2 environment from our
+    # SDK-sent value, making the AppSignals "baseline" circular during the env test. Keeping
+    # it out of the global chain preserves an SDK-independent AppSignals baseline. The ASG is
+    # instead resolved into the dedicated ServiceEvents resource below.
+    base_detectors = (
         [
             AwsEc2ResourceDetector(),
-            # Adds the ASG instance tag (ec2.tag.aws:autoscaling:groupName) that the stock
-            # AwsEc2ResourceDetector omits — needed for SDK-side environment resolution to
-            # match the CloudWatch agent on EC2 (ec2:<asg>).
-            Ec2AutoScalingGroupResourceDetector(),
             AwsEksResourceDetector(),
             AwsEcsResourceDetector(),
         ]
@@ -215,7 +218,22 @@ def _initialize_components():
         else []
     )
 
-    resource = _customize_resource(get_aggregated_resources(resource_detectors).merge(Resource.create(auto_resource)))
+    resource = _customize_resource(get_aggregated_resources(base_detectors).merge(Resource.create(auto_resource)))
+
+    # TEST-ONLY (revertible): ServiceEvents gets its OWN resource, built from a full copy of
+    # the detector set PLUS the custom EC2 ASG detector, so aws.local.environment can resolve
+    # ec2:<asg> without leaking the ASG tag onto the global/AppSignals resource.
+    serviceevents_resource = resource
+    if base_detectors:
+        serviceevents_detectors = [
+            AwsEc2ResourceDetector(),
+            Ec2AutoScalingGroupResourceDetector(),
+            AwsEksResourceDetector(),
+            AwsEcsResourceDetector(),
+        ]
+        serviceevents_resource = _customize_resource(
+            get_aggregated_resources(serviceevents_detectors).merge(Resource.create(auto_resource))
+        )
 
     sampler_name = _get_sampler()
     sampler = _custom_import_sampler(sampler_name, resource)
@@ -232,8 +250,9 @@ def _initialize_components():
     if logging_enabled.strip().lower() == "true":
         _init_logging(log_exporters, resource)
 
-    # Initialize ServiceEvents instrumentation
-    _init_serviceevents(resource)
+    # Initialize ServiceEvents instrumentation (uses the ServiceEvents-specific resource,
+    # which includes the EC2 ASG tag; see TEST-ONLY note above).
+    _init_serviceevents(serviceevents_resource)
 
 
 def _init_serviceevents(resource=None):

@@ -13,13 +13,22 @@ the same environment value the agent would, with no dependency on the agent proc
 Scope is the LOCAL environment only (aws.local.environment); remote-environment
 correlation is out of scope (it depends on the agent's cluster-wide pod watcher).
 """
-from typing import Dict, Mapping
+from typing import Callable, Dict, Mapping, Optional
 
 AWS_LOCAL_ENVIRONMENT_KEY = "aws.local.environment"
 
 
-def resolve_local_environment(attributes: Mapping[str, object]) -> str:
-    """Resolve aws.local.environment from the given resource attributes."""
+def resolve_local_environment(
+    attributes: Mapping[str, object], asg_supplier: Optional[Callable[[], str]] = None
+) -> str:
+    """Resolve aws.local.environment from the given resource attributes.
+
+    asg_supplier, when provided, supplies the EC2 Auto Scaling group name and is invoked
+    ONLY if the resolver reaches the EC2 branch (so EKS/ECS/explicit-env never trigger an
+    IMDS lookup). It is the fallback for callers whose resource does not already carry
+    ``ec2.tag.aws:autoscaling:groupName`` (e.g. Dynamic Instrumentation reading the global
+    resource, which intentionally omits the ASG tag).
+    """
 
     def _str(key: str) -> str:
         value = attributes.get(key)
@@ -49,8 +58,10 @@ def resolve_local_environment(attributes: Mapping[str, object]) -> str:
         if ecs_cluster:
             return f"ecs:{ecs_cluster}"
 
-    # 4. EC2: use the Auto Scaling group if available.
+    # 4. EC2: use the Auto Scaling group from the resource, or the lazy supplier.
     asg = _str("ec2.tag.aws:autoscaling:groupName")
+    if not asg and asg_supplier is not None:
+        asg = (asg_supplier() or "").strip()
     if asg:
         return f"ec2:{asg}"
 
