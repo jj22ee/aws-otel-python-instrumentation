@@ -72,6 +72,7 @@ from opentelemetry.sdk.environment_variables import (
 from opentelemetry.sdk.extension.aws.resource.ec2 import AwsEc2ResourceDetector
 from opentelemetry.sdk.extension.aws.resource.ecs import AwsEcsResourceDetector
 from opentelemetry.sdk.extension.aws.resource.eks import AwsEksResourceDetector
+from amazon.opentelemetry.distro.serviceevents.utils.ec2_asg_detector import Ec2AutoScalingGroupResourceDetector
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics._internal.instrument import (
     Counter,
@@ -203,6 +204,10 @@ def _initialize_components():
     resource_detectors = (
         [
             AwsEc2ResourceDetector(),
+            # Adds the ASG instance tag (ec2.tag.aws:autoscaling:groupName) that the stock
+            # AwsEc2ResourceDetector omits — needed for SDK-side environment resolution to
+            # match the CloudWatch agent on EC2 (ec2:<asg>).
+            Ec2AutoScalingGroupResourceDetector(),
             AwsEksResourceDetector(),
             AwsEcsResourceDetector(),
         ]

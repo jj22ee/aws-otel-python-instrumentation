@@ -17,8 +17,8 @@ from amazon.opentelemetry.distro._aws_resource_attribute_configurator import _OT
 from amazon.opentelemetry.distro._aws_span_processing_util import UNKNOWN_SERVICE
 from amazon.opentelemetry.distro.debugger._data_models import BreakpointConfiguration
 from amazon.opentelemetry.distro.debugger.instrumentation_manager import get_global_manager
+from amazon.opentelemetry.distro.serviceevents.utils.environment_resolver import resolve_local_environment
 from opentelemetry import trace
-from opentelemetry.semconv.resource import ResourceAttributes
 
 try:
     import requests
@@ -65,6 +65,7 @@ class DebuggerClient:
         self._service_name_override = service_name
         self._cached_service_name: Optional[str] = None
         self._cached_environment: Optional[str] = None
+        self._cached_namespace: Optional[str] = None
         self.proxy_url = api_url or self._get_api_url()
         self.timeout = timeout
         self.probe_poll_interval = probe_poll_interval
@@ -125,11 +126,19 @@ class DebuggerClient:
     @property
     def environment(self) -> str:
         """
-        Get environment from OpenTelemetry resource (lazy-loaded, cached after successful resolution).
+        Get aws.local.environment from the OpenTelemetry resource (lazy-loaded, cached).
 
-        Only caches successful environment resolution to handle timing issues with Resource population.
-        If environment is not yet available, returns "UnknownEnvironment" without caching,
-        allowing automatic retry on next call.
+        SDK-only environment resolution: rather than reading only an explicit
+        deployment.environment[.name], compute the full aws.local.environment from the
+        detected resource attributes using the same precedence as the CloudWatch agent
+        (explicit -> eks/k8s:<cluster>/<namespace> -> ecs:<cluster> -> ec2:<asg> ->
+        ec2:default). This makes DI self-sufficient — the value used as the request's
+        Environment lookup key matches Application Signals without relying on the agent
+        proxy to inject it.
+
+        Only caches once the resource carries platform context, to handle timing issues
+        with Resource population. Until then returns "UnknownEnvironment" without caching,
+        allowing automatic retry on the next call.
         """
         # Return cached value if we successfully found it before
         if self._cached_environment:
@@ -141,22 +150,68 @@ class DebuggerClient:
             tracer_provider = trace.get_tracer_provider()
             global_resource = tracer_provider.resource
 
-            # Try deployment.environment.name first, then DEPLOYMENT_ENVIRONMENT
-            environment = global_resource.attributes.get(
-                "deployment.environment.name"
-            ) or global_resource.attributes.get(ResourceAttributes.DEPLOYMENT_ENVIRONMENT)
+            environment = resolve_local_environment(global_resource.attributes)
 
-            if environment:
-                # SUCCESS! Cache it so we never query again
+            # Cache only once the resource has the platform context to resolve a concrete
+            # value. "ec2:default" is also the fallback when the resource is still empty
+            # (no cloud.platform / host / k8s attributes yet), so don't cache that case —
+            # the Resource may still be populating.
+            has_platform_context = any(
+                global_resource.attributes.get(key)
+                for key in ("cloud.platform", "k8s.cluster.name", "aws.ecs.cluster.arn", "host.id")
+            )
+            if environment and (environment != "ec2:default" or has_platform_context):
                 self._cached_environment = environment
                 logger.debug("Deployment environment resolved and cached: %s", environment)
                 return environment
         except Exception as exception:  # pylint: disable=broad-exception-caught
             logger.debug("Error getting environment from OpenTelemetry resource: %s", exception)
 
-        # Attribute not available yet - don't cache, try again next time
-        logger.debug("deployment.environment.name attribute not yet available, will retry on next call")
+        # Resource not populated yet - don't cache, try again next time
+        logger.debug("environment not yet resolvable from resource, will retry on next call")
         return "UnknownEnvironment"  # Don't cache - Resource might populate later
+
+    @property
+    def namespace(self) -> str:
+        """
+        Get the Kubernetes namespace (k8s.namespace.name) from the OpenTelemetry resource.
+
+        Forwarded to the CloudWatch agent proxy so it can resolve the same
+        aws.local.environment (eks:<cluster>/<namespace>) that Application Signals uses.
+        Returns "" (and does not cache) when unavailable, so a later-populated Resource
+        is picked up on the next call.
+        """
+        if self._cached_namespace:
+            return self._cached_namespace
+        try:
+            global_resource = trace.get_tracer_provider().resource
+            namespace = global_resource.attributes.get("k8s.namespace.name")
+            if namespace:
+                self._cached_namespace = namespace
+                return namespace
+        except Exception as exception:  # pylint: disable=broad-exception-caught
+            logger.debug("Error getting namespace from OpenTelemetry resource: %s", exception)
+        return ""
+
+    def _environment_headers(self) -> dict:
+        """
+        Build the pod-owned environment headers sent to the CloudWatch agent proxy.
+
+        The agent cannot derive these itself: the namespace and an explicit deployment
+        environment are properties of the calling pod. Headers are only included when
+        present, so non-K8s / no-explicit-env deployments are unaffected. The proxy
+        resolves these (plus its own cluster/ASG) into the request's Environment lookup
+        key, matching Application Signals.
+        """
+        headers = {}
+        namespace = self.namespace
+        if namespace:
+            headers["X-Aws-K8s-Namespace"] = namespace
+        # environment returns "UnknownEnvironment" when unresolved; only forward a real value.
+        environment = self.environment
+        if environment and environment != "UnknownEnvironment":
+            headers["X-Aws-Deployment-Environment"] = environment
+        return headers
 
     @staticmethod
     def _get_api_url() -> str:
@@ -273,7 +328,9 @@ class DebuggerClient:
 
                     url = self.proxy_url + "/list-instrumentation-configurations"
                     logger.debug("Making request to: %s for %s", url, instrumentation_type)
-                    response = self._session.post(url, json=payload, timeout=self.timeout)
+                    response = self._session.post(
+                        url, json=payload, headers=self._environment_headers(), timeout=self.timeout
+                    )
 
                     # Check response status
                     if response.status_code == 200:

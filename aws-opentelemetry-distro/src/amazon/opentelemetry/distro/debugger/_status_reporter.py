@@ -229,7 +229,12 @@ class StatusReporter:
         try:
             url = self._client.proxy_url + "/report-instrumentation-configuration-status"
             with suppress_http_instrumentation():
-                response = self._client._session.post(url, json=payload, timeout=self._client.timeout)
+                response = self._client._session.post(
+                    url,
+                    json=payload,
+                    headers=self._client._environment_headers(),
+                    timeout=self._client.timeout,
+                )
 
             if response.status_code == 200:
                 logger.debug("Status report sent successfully: %s", payload)
