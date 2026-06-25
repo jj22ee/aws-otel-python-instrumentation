@@ -65,7 +65,6 @@ class DebuggerClient:
         self._service_name_override = service_name
         self._cached_service_name: Optional[str] = None
         self._cached_environment: Optional[str] = None
-        self._cached_namespace: Optional[str] = None
         self.proxy_url = api_url or self._get_api_url()
         self.timeout = timeout
         self.probe_poll_interval = probe_poll_interval
@@ -170,48 +169,6 @@ class DebuggerClient:
         # Resource not populated yet - don't cache, try again next time
         logger.debug("environment not yet resolvable from resource, will retry on next call")
         return "UnknownEnvironment"  # Don't cache - Resource might populate later
-
-    @property
-    def namespace(self) -> str:
-        """
-        Get the Kubernetes namespace (k8s.namespace.name) from the OpenTelemetry resource.
-
-        Forwarded to the CloudWatch agent proxy so it can resolve the same
-        aws.local.environment (eks:<cluster>/<namespace>) that Application Signals uses.
-        Returns "" (and does not cache) when unavailable, so a later-populated Resource
-        is picked up on the next call.
-        """
-        if self._cached_namespace:
-            return self._cached_namespace
-        try:
-            global_resource = trace.get_tracer_provider().resource
-            namespace = global_resource.attributes.get("k8s.namespace.name")
-            if namespace:
-                self._cached_namespace = namespace
-                return namespace
-        except Exception as exception:  # pylint: disable=broad-exception-caught
-            logger.debug("Error getting namespace from OpenTelemetry resource: %s", exception)
-        return ""
-
-    def _environment_headers(self) -> dict:
-        """
-        Build the pod-owned environment headers sent to the CloudWatch agent proxy.
-
-        The agent cannot derive these itself: the namespace and an explicit deployment
-        environment are properties of the calling pod. Headers are only included when
-        present, so non-K8s / no-explicit-env deployments are unaffected. The proxy
-        resolves these (plus its own cluster/ASG) into the request's Environment lookup
-        key, matching Application Signals.
-        """
-        headers = {}
-        namespace = self.namespace
-        if namespace:
-            headers["X-Aws-K8s-Namespace"] = namespace
-        # environment returns "UnknownEnvironment" when unresolved; only forward a real value.
-        environment = self.environment
-        if environment and environment != "UnknownEnvironment":
-            headers["X-Aws-Deployment-Environment"] = environment
-        return headers
 
     @staticmethod
     def _get_api_url() -> str:
@@ -328,9 +285,7 @@ class DebuggerClient:
 
                     url = self.proxy_url + "/list-instrumentation-configurations"
                     logger.debug("Making request to: %s for %s", url, instrumentation_type)
-                    response = self._session.post(
-                        url, json=payload, headers=self._environment_headers(), timeout=self.timeout
-                    )
+                    response = self._session.post(url, json=payload, timeout=self.timeout)
 
                     # Check response status
                     if response.status_code == 200:
