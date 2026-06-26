@@ -99,8 +99,17 @@ class TestResolveLocalEnvironment(TestCase):
     def test_ec2_without_asg_defaults(self):
         self.assertEqual(resolve_local_environment({"cloud.platform": "aws_ec2"}), "ec2:default")
 
-    def test_empty_attributes_default(self):
-        self.assertEqual(resolve_local_environment({}), "ec2:default")
+    def test_empty_attributes_non_aws_returns_empty(self):
+        # No platform signal (non-AWS / undetected host): the agent leaves Environment empty,
+        # so the SDK returns "" rather than falsely claiming ec2:default.
+        self.assertEqual(resolve_local_environment({}), "")
+
+    def test_non_aws_host_with_only_service_name_returns_empty(self):
+        self.assertEqual(resolve_local_environment({"service.name": "svc", "host.name": "my-vm"}), "")
+
+    def test_ec2_default_when_host_id_present(self):
+        # host.id (EC2 instance id from the OTel EC2 detector) marks the host as EC2.
+        self.assertEqual(resolve_local_environment({"cloud.platform": "aws_ec2", "host.id": "i-0abc"}), "ec2:default")
 
     def test_kubernetes_precedes_ecs_and_ec2(self):
         # When both k8s and ec2 ASG are present (unusual), Kubernetes wins, matching the agent.
@@ -136,11 +145,12 @@ class TestResolveLocalEnvironment(TestCase):
             "ecs:bogus",
         )
 
-    def test_ecs_empty_arn_falls_through_to_ec2(self):
-        # A trailing-slash ARN yields an empty cluster name; resolver must fall through.
+    def test_ecs_empty_arn_falls_through_to_empty(self):
+        # A trailing-slash ARN yields an empty cluster name; with cloud.platform=aws_ecs (not
+        # aws_ec2) and no EC2 signal, the resolver falls through to "" (not ec2:default).
         self.assertEqual(
             resolve_local_environment({"cloud.platform": "aws_ecs", "aws.ecs.cluster.arn": "arn:.../cluster/"}),
-            "ec2:default",
+            "",
         )
 
 

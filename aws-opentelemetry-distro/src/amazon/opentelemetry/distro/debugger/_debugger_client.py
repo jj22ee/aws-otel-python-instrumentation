@@ -171,10 +171,11 @@ class DebuggerClient:
             # lookup via the ASG detector. Other branches never invoke the supplier.
             environment = resolve_local_environment(global_resource.attributes, _fetch_ec2_asg)
 
-            # Cache only once the resource has the platform context to resolve a concrete
-            # value. "ec2:default" is also the fallback when the resource is still empty
-            # (no cloud.platform / host / k8s attributes yet), so don't cache that case —
-            # the Resource may still be populating.
+            # The resolver returns "" until the resource has platform context (non-AWS host,
+            # OR resource still populating). Only cache a concrete value. ec2:default is
+            # guarded too: it's a real answer on a bare EC2 instance, but also what a
+            # half-populated resource could momentarily yield, so require platform context
+            # before caching it.
             has_platform_context = any(
                 global_resource.attributes.get(key)
                 for key in ("cloud.platform", "k8s.cluster.name", "aws.ecs.cluster.arn", "host.id")
