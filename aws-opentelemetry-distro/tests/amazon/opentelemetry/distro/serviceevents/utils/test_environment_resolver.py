@@ -99,13 +99,15 @@ class TestResolveLocalEnvironment(TestCase):
     def test_ec2_without_asg_defaults(self):
         self.assertEqual(resolve_local_environment({"cloud.platform": "aws_ec2"}), "ec2:default")
 
-    def test_empty_attributes_non_aws_returns_empty(self):
-        # No platform signal (non-AWS / undetected host): the agent leaves Environment empty,
-        # so the SDK returns "" rather than falsely claiming ec2:default.
-        self.assertEqual(resolve_local_environment({}), "")
+    def test_empty_attributes_non_aws_returns_generic_default(self):
+        # No platform signal (non-AWS / undetected host): the agent runs its "generic" resolver
+        # and emits "generic:default", so the SDK matches that rather than claiming ec2:default.
+        self.assertEqual(resolve_local_environment({}), "generic:default")
 
-    def test_non_aws_host_with_only_service_name_returns_empty(self):
-        self.assertEqual(resolve_local_environment({"service.name": "svc", "host.name": "my-vm"}), "")
+    def test_non_aws_host_with_only_service_name_returns_generic_default(self):
+        self.assertEqual(
+            resolve_local_environment({"service.name": "svc", "host.name": "my-vm"}), "generic:default"
+        )
 
     def test_ec2_default_when_host_id_present(self):
         # host.id (EC2 instance id from the OTel EC2 detector) marks the host as EC2.
@@ -145,12 +147,13 @@ class TestResolveLocalEnvironment(TestCase):
             "ecs:bogus",
         )
 
-    def test_ecs_empty_arn_falls_through_to_empty(self):
+    def test_ecs_empty_arn_falls_through_to_generic_default(self):
         # A trailing-slash ARN yields an empty cluster name; with cloud.platform=aws_ecs (not
-        # aws_ec2) and no EC2 signal, the resolver falls through to "" (not ec2:default).
+        # aws_ec2) and no EC2 signal, the resolver falls through to "generic:default" (not
+        # ec2:default), matching the agent's generic resolver.
         self.assertEqual(
             resolve_local_environment({"cloud.platform": "aws_ecs", "aws.ecs.cluster.arn": "arn:.../cluster/"}),
-            "",
+            "generic:default",
         )
 
 

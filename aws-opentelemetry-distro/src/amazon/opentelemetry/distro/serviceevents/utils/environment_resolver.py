@@ -9,12 +9,14 @@ the same environment value the agent would, with no dependency on the agent proc
     2. EKS / K8s -> "eks:<cluster>/<namespace>" or "k8s:<cluster>/<namespace>"
     3. ECS -> "ecs:<cluster>" (cluster name from aws.ecs.cluster.arn)
     4. EC2 (cloud.platform == aws_ec2) -> "ec2:<asg>" when an ASG is known, else "ec2:default"
-    5. Otherwise (non-AWS / undetected host) -> "" (omit the key)
+    5. Otherwise (non-AWS / undetected host) -> "generic:default"
 
 The EC2 branch is gated on the platform actually being EC2, mirroring the CloudWatch agent,
 whose environment branches only run for EC2 (Platform == ModeEC2) or Kubernetes. On a
-non-AWS / non-K8s host the agent leaves the Environment empty, so the SDK returns "" rather
-than falsely claiming "ec2:default".
+non-AWS / non-K8s host the CloudWatch agent runs its "generic" resolver (Mode == onPremise)
+and emits "generic:default" -- it never leaves Environment empty -- so the SDK matches by
+returning "generic:default" rather than empty. (Verified live: blocking IMDS makes the agent
+fall to the generic resolver / "generic:default".)
 
 Scope is the LOCAL environment only (aws.local.environment); remote-environment
 correlation is out of scope (it depends on the agent's cluster-wide pod watcher).
@@ -75,15 +77,16 @@ def resolve_local_environment(
     if is_ec2:
         return f"ec2:{asg}" if asg else "ec2:default"
 
-    # 5. Non-AWS / undetected host: the agent leaves Environment empty here, so do we.
-    return ""
+    # 5. Non-AWS / undetected host: the CloudWatch agent runs its "generic" resolver here and
+    #    emits "generic:default" (never empty), so mirror that instead of omitting the key.
+    return "generic:default"
 
 
 def stamp_local_environment(attrs: Dict[str, str]) -> None:
     """Stamp aws.local.environment onto a mutable attribute dict (idempotent).
 
-    Only stamps when the resolver produced a non-empty value, so a non-AWS host omits the
-    key entirely (matching the CloudWatch agent, which leaves Environment empty there)."""
+    The resolver always yields a non-empty value (a platform scope, an explicit env, or the
+    "generic:default" fallback), matching the CloudWatch agent, which always sets Environment."""
     if attrs.get(AWS_LOCAL_ENVIRONMENT_KEY):
         return
     resolved = resolve_local_environment(attrs)
