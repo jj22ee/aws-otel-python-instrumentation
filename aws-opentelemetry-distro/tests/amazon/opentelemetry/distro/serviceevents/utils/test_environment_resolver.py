@@ -12,7 +12,7 @@ from amazon.opentelemetry.distro.serviceevents.utils.environment_resolver import
 
 class TestResolveLocalEnvironment(TestCase):
     """The SDK-side resolver must produce the SAME aws.local.environment the CloudWatch
-    agent's awsentity resolver produces, from the same OTel resource attributes.
+    agent's awsapplicationsignals resolver produces, from the same OTel resource attributes.
     Precedence: explicit deployment.environment[.name] -> eks/k8s cluster/namespace ->
     ecs:<cluster> -> ec2:<asg> -> ec2:default.
     """

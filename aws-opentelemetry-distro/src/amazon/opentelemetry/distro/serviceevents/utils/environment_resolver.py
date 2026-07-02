@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Resolve ``aws.local.environment`` from OTel Resource attributes.
 
-Mirrors the CloudWatch agent's awsentity resolver precedence so the SDK can compute
+Mirrors the CloudWatch agent's awsapplicationsignals resolver precedence so the SDK can compute
 the same environment value the agent would, with no dependency on the agent process:
 
     1. Explicit deployment.environment[.name] -> use as-is

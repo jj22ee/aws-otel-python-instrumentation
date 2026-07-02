@@ -204,7 +204,7 @@ def _initialize_components():
     # TEST-ONLY (revertible): the EC2 ASG detector is intentionally NOT in the global
     # detector list, so ec2.tag.aws:autoscaling:groupName does NOT ride the global resource
     # (which feeds Application Signals). The CloudWatch agent reads that exact key off
-    # incoming telemetry (awsentity processor) and would resolve EC2 environment from our
+    # incoming telemetry (awsapplicationsignals processor) and would resolve EC2 environment from our
     # SDK-sent value, making the AppSignals "baseline" circular during the env test. Keeping
     # it out of the global chain preserves an SDK-independent AppSignals baseline. The ASG is
     # instead resolved into the dedicated ServiceEvents resource below.
