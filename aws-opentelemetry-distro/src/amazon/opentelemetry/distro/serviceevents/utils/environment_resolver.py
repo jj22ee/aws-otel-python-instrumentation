@@ -23,6 +23,8 @@ correlation is out of scope (it depends on the agent's cluster-wide pod watcher)
 """
 from typing import Callable, Dict, Mapping, Optional
 
+from amazon.opentelemetry.distro.serviceevents.utils.eks_detector import is_eks
+
 AWS_LOCAL_ENVIRONMENT_KEY = "aws.local.environment"
 
 
@@ -51,12 +53,17 @@ def resolve_local_environment(
         return explicit_env
 
     # 2. Kubernetes (EKS / K8s): "<prefix>:<cluster>/<namespace>".
+    # EXPERIMENT: the eks: vs k8s: prefix is decided by the SDK's OWN runtime detection
+    # (eks_detector.is_eks(), ported from the CloudWatch agent's eksdetector) rather than the
+    # operator-injected cloud.platform. This makes the SDK use the same source of truth the
+    # agent uses, so both agree even when Helm .Values.k8sMode is left at its EKS default on a
+    # non-EKS cluster.
     k8s_cluster = _str("k8s.cluster.name")
     namespace = _str("k8s.namespace.name")
     cloud_platform = _str("cloud.platform")
     if k8s_cluster:
         ns = namespace or "UnknownNamespace"
-        prefix = "eks" if cloud_platform == "aws_eks" else "k8s"
+        prefix = "eks" if is_eks() else "k8s"
         return f"{prefix}:{k8s_cluster}/{ns}"
 
     # 3. ECS: "ecs:<cluster>" — cluster name is the last segment of the ECS cluster ARN.
